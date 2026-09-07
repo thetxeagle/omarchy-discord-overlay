@@ -55,11 +55,14 @@ bar plugin.
   a duplicate instance over the manual test process.
 - The updated channel-name QML requires restarting the manual Quickshell
   process or starting the user service for runtime confirmation.
+- A duplicate roster was traced to the foreground test instance running beside
+  the permanent service; stopping the test process left one Nameplate layer per
+  monitor.
 
 ## Next Steps
 
 - [x] Run shell syntax and JSON validation.
-- [ ] Restart Nameplate and test channel label plus bar controls.
+- [x] Restart Nameplate and test channel label plus bar controls.
 - [ ] Commit and push the validated implementation.
 
 ## Notes
