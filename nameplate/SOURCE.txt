@@ -1,0 +1,3 @@
+Upstream project: https://github.com/rollecode/nameplate
+Pinned source commit: b49464b652fccfb1ca7cf43d25dacdbe1e19db38
+License: MIT (see LICENSE)

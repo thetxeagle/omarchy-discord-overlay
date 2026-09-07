@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Discord voice state as newline-delimited JSON on stdout."""
+
+import json
+import os
+import sys
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import websocket
+
+# Discord's own Streamkit application by default: its token endpoint performs
+# the OAuth exchange, so no client secret has to live here. Override both to
+# authorise under your own application instead.
+CLIENT_ID = os.environ.get("NAMEPLATE_CLIENT_ID", "207646673902501888")
+CLIENT_SECRET = os.environ.get("NAMEPLATE_CLIENT_SECRET")
+TOKEN_URL = ("https://discord.com/api/oauth2/token" if CLIENT_SECRET
+             else "https://streamkit.discord.com/overlay/token")
+ORIGIN = "http://localhost:3000"
+PORTS = range(6463, 6473)
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nameplate"
+TOKEN_FILE = CONFIG_DIR / "token"
+
+VOICE_EVENTS = ("VOICE_STATE_CREATE", "VOICE_STATE_UPDATE", "VOICE_STATE_DELETE",
+                "SPEAKING_START", "SPEAKING_STOP")
+
+
+def log(message):
+    print(message, file=sys.stderr, flush=True)
+
+
+class Bridge:
+    def __init__(self):
+        self.ws = None
+        self.token = TOKEN_FILE.read_text().strip() if TOKEN_FILE.exists() else None
+        self.channel_id = None
+        self.channel = None
+        self.users = {}
+        self.me = None
+        self.emitted = None
+        self.backoff = 5
+
+    def send(self, cmd, args=None, nonce="nameplate", evt=None):
+        payload = {"cmd": cmd, "nonce": nonce}
+        if args is not None:
+            payload["args"] = args
+        if evt is not None:
+            payload["evt"] = evt
+        self.ws.send(json.dumps(payload))
+
+    def emit(self):
+        state = {
+            "in_voice": self.channel is not None,
+            "channel": self.channel,
+            "users": sorted(self.users.values(), key=lambda u: u["name"].lower()),
+        }
+        line = json.dumps(state, separators=(",", ":"))
+        if line != self.emitted:
+            print(line, flush=True)
+            self.emitted = line
+
+    def connect(self):
+        for port in PORTS:
+            try:
+                self.ws = websocket.create_connection(
+                    f"ws://127.0.0.1:{port}/?v=1&client_id={CLIENT_ID}",
+                    origin=ORIGIN, timeout=5)
+                # Blocking reads from here on: Discord sends nothing between
+                # events, and the connect timeout would end the session.
+                self.ws.settimeout(None)
+                log(f"connected on port {port}")
+                return True
+            except Exception:
+                continue
+        return False
+
+    def authorize(self):
+        if self.token:
+            self.send("AUTHENTICATE", {"access_token": self.token})
+        else:
+            log("requesting authorisation, approve the dialog in Discord")
+            self.send("AUTHORIZE", {"client_id": CLIENT_ID, "scopes": ["rpc"]})
+
+    def exchange_code(self, code):
+        if CLIENT_SECRET:
+            body = urllib.parse.urlencode({
+                "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+                "grant_type": "authorization_code", "code": code}).encode()
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        else:
+            body = json.dumps({"code": code}).encode()
+            # Streamkit sits behind Cloudflare, which answers a default urllib
+            # User-Agent with 403 error 1010. Ask as a browser would.
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                               "(KHTML, like Gecko) Chrome/140.0 Safari/537.36"),
+                "Origin": "https://streamkit.discord.com",
+                "Referer": "https://streamkit.discord.com/overlay",
+            }
+        request = urllib.request.Request(TOKEN_URL, data=body, headers=headers)
+        with urllib.request.urlopen(request, timeout=10) as response:
+            token = json.load(response).get("access_token")
+        if not token:
+            raise RuntimeError("no access_token in Streamkit response")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(token)
+        TOKEN_FILE.chmod(0o600)
+        self.token = token
+        self.send("AUTHENTICATE", {"access_token": token})
+
+    def subscribe_channel(self, channel_id, subscribe=True):
+        cmd = "SUBSCRIBE" if subscribe else "UNSUBSCRIBE"
+        for event in VOICE_EVENTS:
+            self.send(cmd, {"channel_id": channel_id}, evt=event)
+
+    def set_channel(self, channel_id):
+        if self.channel_id == channel_id:
+            return
+        if self.channel_id:
+            self.subscribe_channel(self.channel_id, subscribe=False)
+        self.channel_id = channel_id
+        self.users = {}
+        self.channel = None
+        if channel_id:
+            self.subscribe_channel(channel_id)
+            self.send("GET_CHANNEL", {"channel_id": channel_id}, nonce="channel")
+        else:
+            self.emit()
+
+    def add_user(self, state):
+        user = state.get("user", {})
+        uid = user.get("id")
+        if not uid:
+            return
+        avatar = user.get("avatar")
+        self.users[uid] = {
+            "id": uid,
+            "name": state.get("nick") or user.get("global_name") or user.get("username", "?"),
+            "avatar": (f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png?size=64"
+                       if avatar else
+                       f"https://cdn.discordapp.com/embed/avatars/{(int(uid) >> 22) % 6}.png"),
+            "speaking": self.users.get(uid, {}).get("speaking", False),
+            "self": uid == self.me,
+            "mute": bool(state.get("mute") or state.get("voice_state", {}).get("mute")),
+            "deaf": bool(state.get("deaf") or state.get("voice_state", {}).get("deaf")),
+        }
+
+    def handle(self, message):
+        cmd, evt, data = message.get("cmd"), message.get("evt"), message.get("data") or {}
+
+        if evt == "ERROR":
+            log(f"discord error: {data.get('message')}")
+            if cmd == "AUTHENTICATE":
+                TOKEN_FILE.unlink(missing_ok=True)
+                self.token = None
+                self.authorize()
+            return
+
+        if evt == "READY":
+            self.authorize()
+        elif cmd == "AUTHORIZE":
+            try:
+                self.exchange_code(data["code"])
+            except Exception as error:
+                # Never retry straight away: each attempt costs the user another
+                # authorisation dialog.
+                self.backoff = 300
+                raise RuntimeError(f"token exchange failed: {error}") from error
+        elif cmd == "AUTHENTICATE":
+            self.me = (data.get("user") or {}).get("id")
+            self.send("SUBSCRIBE", evt="VOICE_CHANNEL_SELECT")
+            self.send("GET_SELECTED_VOICE_CHANNEL", {}, nonce="selected")
+        elif cmd in ("GET_SELECTED_VOICE_CHANNEL", "GET_CHANNEL"):
+            if not data or not data.get("id"):
+                self.set_channel(None)
+                self.emit()
+                return
+            self.set_channel(data["id"])
+            self.channel = data.get("name")
+            for state in data.get("voice_states", []):
+                self.add_user(state)
+            self.emit()
+        elif evt == "VOICE_CHANNEL_SELECT":
+            channel_id = data.get("channel_id")
+            self.set_channel(channel_id)
+            if channel_id:
+                self.send("GET_CHANNEL", {"channel_id": channel_id}, nonce="channel")
+        elif evt in ("VOICE_STATE_CREATE", "VOICE_STATE_UPDATE"):
+            self.add_user(data)
+            self.emit()
+        elif evt == "VOICE_STATE_DELETE":
+            self.users.pop(data.get("user", {}).get("id"), None)
+            self.emit()
+        elif evt in ("SPEAKING_START", "SPEAKING_STOP"):
+            user = self.users.get(data.get("user_id"))
+            if user:
+                user["speaking"] = evt == "SPEAKING_START"
+                self.emit()
+
+    def run(self):
+        while True:
+            if not self.connect():
+                self.channel = self.channel_id = None
+                self.users = {}
+                self.emit()
+                time.sleep(self.backoff)
+                continue
+            try:
+                while True:
+                    self.handle(json.loads(self.ws.recv()))
+                    self.backoff = 5
+            except Exception as error:
+                log(f"disconnected: {error}")
+                if self.backoff > 5:
+                    log(f"waiting {self.backoff}s before trying again")
+                time.sleep(self.backoff)
+            finally:
+                try:
+                    self.ws.close()
+                except Exception:
+                    pass
+                self.ws = None
+
+
+if __name__ == "__main__":
+    try:
+        Bridge().run()
+    except KeyboardInterrupt:
+        pass

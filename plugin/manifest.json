@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "eagle.discord-voice-overlay",
+  "name": "Discord Voice Overlay",
+  "version": "0.1.0",
+  "author": "Eagle",
+  "license": "MIT",
+  "description": "An always-on-top Discord voice roster with bar-controlled grid placement.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Discord Voice Overlay",
+    "description": "Show who is speaking in Discord and place the roster on a 3x3 screen grid.",
+    "category": "Communication",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
