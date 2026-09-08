@@ -71,7 +71,8 @@ bar plugin.
   remote avatar decoding.
 - Focused security checks passed, including token symlink rejection, 0700/0600
   permission enforcement, live RPC process verification, bridge syntax, and
-  marketplace manifest validation.
+  marketplace manifest validation. A temporary bytecode artifact was removed
+  in a follow-up cleanup commit and is now ignored.
 
 ## Next Steps
 
