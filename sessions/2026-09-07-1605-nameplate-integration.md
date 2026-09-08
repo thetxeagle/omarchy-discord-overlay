@@ -65,13 +65,20 @@ bar plugin.
 - The self-contained plugin loaded after `omarchy restart shell` and started
   its bundled bridge; the bridge reported `in_voice:false` during the final
   check because no active voice channel was selected.
+- Addressed marketplace security findings in the bundled bridge and renderer:
+  verified Discord/Vesktop executable ownership, bounded RPC/HTTP/user data,
+  descriptor-safe token storage, plain-text fields, and initials instead of
+  remote avatar decoding.
+- Focused security checks passed, including token symlink rejection, 0700/0600
+  permission enforcement, live RPC process verification, bridge syntax, and
+  marketplace manifest validation.
 
 ## Next Steps
 
 - [x] Run shell syntax and JSON validation.
 - [x] Restart the self-contained plugin and test channel label plus bridge load.
 - [ ] Test bar controls while actively in a voice channel.
-- [ ] Commit and push the validated implementation.
+- [ ] Commit and push the security fix and request marketplace re-review.
 
 ## Notes
 

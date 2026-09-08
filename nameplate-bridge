@@ -3,6 +3,7 @@
 
 import json
 import os
+import stat
 import sys
 import time
 import urllib.parse
@@ -20,6 +21,14 @@ TOKEN_URL = ("https://discord.com/api/oauth2/token" if CLIENT_SECRET
              else "https://streamkit.discord.com/overlay/token")
 ORIGIN = "http://localhost:3000"
 PORTS = range(6463, 6473)
+MAX_MESSAGE_BYTES = 256 * 1024
+MAX_HTTP_BYTES = 32 * 1024
+MAX_TOKEN_BYTES = 4096
+MAX_USERS = 200
+MAX_NAME_CHARS = 128
+MAX_CHANNEL_CHARS = 128
+MAX_ID_CHARS = 32
+RPC_PROCESS_NAMES = {"discord", "vesktop"}
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nameplate"
 TOKEN_FILE = CONFIG_DIR / "token"
@@ -32,10 +41,109 @@ def log(message):
     print(message, file=sys.stderr, flush=True)
 
 
+def safe_token_read():
+    """Read only an owner-only regular token file without following symlinks."""
+    directory_fd = None
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        directory_fd = os.open(CONFIG_DIR, os.O_RDONLY | os.O_DIRECTORY
+                                | os.O_CLOEXEC | os.O_NOFOLLOW)
+        directory = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid():
+            raise RuntimeError("unsafe token directory")
+        os.fchmod(directory_fd, 0o700)
+        fd = os.open("token", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                     dir_fd=directory_fd)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077 or info.st_size <= 0
+                    or info.st_size > MAX_TOKEN_BYTES):
+                raise RuntimeError("unsafe token file")
+            value = os.read(fd, MAX_TOKEN_BYTES + 1)
+            if len(value) > MAX_TOKEN_BYTES:
+                raise RuntimeError("unsafe token file")
+            return value.decode("utf-8").strip()
+        finally:
+            os.close(fd)
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, RuntimeError) as error:
+        log(f"refusing unsafe token file: {error}")
+        return None
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def safe_token_write(token):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory_fd = os.open(CONFIG_DIR, os.O_RDONLY | os.O_DIRECTORY
+                            | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        directory = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid():
+            raise RuntimeError("unsafe token directory")
+        os.fchmod(directory_fd, 0o700)
+        encoded = token.encode("utf-8")
+        if not encoded or len(encoded) > MAX_TOKEN_BYTES or b"\n" in encoded:
+            raise RuntimeError("invalid token size")
+        fd = os.open("token", os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                     | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        try:
+            os.fchmod(fd, 0o600)
+            written = 0
+            while written < len(encoded):
+                written += os.write(fd, encoded[written:])
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+
+def rpc_process_verified(port):
+    """Require the local TCP listener to be our user's Discord/Vesktop process."""
+    wanted_port = f"{port:04X}"
+    inode = None
+    try:
+        with open("/proc/net/tcp", encoding="ascii") as proc_net:
+            for line in proc_net:
+                fields = line.split()
+                if len(fields) > 9 and fields[1].endswith(f":{wanted_port}") and fields[3] == "0A":
+                    inode = fields[9]
+                    break
+        if not inode:
+            return False
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            try:
+                status = Path(f"/proc/{pid}/status").read_text()
+                uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+                if int(uid_line.split()[1]) != os.getuid():
+                    continue
+                fds = Path(f"/proc/{pid}/fd")
+                if not any(os.readlink(fd) == f"socket:[{inode}]" for fd in fds.iterdir()):
+                    continue
+                executable = os.path.realpath(f"/proc/{pid}/exe")
+                executable_info = os.stat(executable)
+                executable_name = os.path.basename(executable).lower()
+                return (executable_name in RPC_PROCESS_NAMES
+                        and stat.S_ISREG(executable_info.st_mode)
+                        and executable_info.st_uid in (0, os.getuid())
+                        and not executable_info.st_mode & 0o022)
+            except (OSError, StopIteration, ValueError, UnicodeError):
+                continue
+    except OSError:
+        return False
+    return False
+
+
 class Bridge:
     def __init__(self):
         self.ws = None
-        self.token = TOKEN_FILE.read_text().strip() if TOKEN_FILE.exists() else None
+        self.token = safe_token_read()
         self.channel_id = None
         self.channel = None
         self.users = {}
@@ -68,6 +176,11 @@ class Bridge:
                 self.ws = websocket.create_connection(
                     f"ws://127.0.0.1:{port}/?v=1&client_id={CLIENT_ID}",
                     origin=ORIGIN, timeout=5)
+                if not rpc_process_verified(port):
+                    log(f"refusing unverified RPC listener on port {port}")
+                    self.ws.close()
+                    self.ws = None
+                    continue
                 # Blocking reads from here on: Discord sends nothing between
                 # events, and the connect timeout would end the session.
                 self.ws.settimeout(None)
@@ -103,12 +216,13 @@ class Bridge:
             }
         request = urllib.request.Request(TOKEN_URL, data=body, headers=headers)
         with urllib.request.urlopen(request, timeout=10) as response:
-            token = json.load(response).get("access_token")
+            response_body = response.read(MAX_HTTP_BYTES + 1)
+        if len(response_body) > MAX_HTTP_BYTES:
+            raise RuntimeError("token response exceeds size limit")
+        token = json.loads(response_body).get("access_token")
         if not token:
             raise RuntimeError("no access_token in Streamkit response")
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        TOKEN_FILE.write_text(token)
-        TOKEN_FILE.chmod(0o600)
+        safe_token_write(token)
         self.token = token
         self.send("AUTHENTICATE", {"access_token": token})
 
@@ -132,25 +246,36 @@ class Bridge:
             self.emit()
 
     def add_user(self, state):
-        user = state.get("user", {})
-        uid = user.get("id")
-        if not uid:
+        if not isinstance(state, dict):
             return
-        avatar = user.get("avatar")
+        user = state.get("user", {})
+        if not isinstance(user, dict):
+            return
+        uid = user.get("id")
+        if not uid or not str(uid).isdigit() or len(str(uid)) > MAX_ID_CHARS:
+            return
+        uid = str(uid)
+        name = state.get("nick") or user.get("global_name") or user.get("username", "?")
+        name = str(name)[:MAX_NAME_CHARS]
+        voice_state = state.get("voice_state", {})
+        if not isinstance(voice_state, dict):
+            voice_state = {}
         self.users[uid] = {
             "id": uid,
-            "name": state.get("nick") or user.get("global_name") or user.get("username", "?"),
-            "avatar": (f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png?size=64"
-                       if avatar else
-                       f"https://cdn.discordapp.com/embed/avatars/{(int(uid) >> 22) % 6}.png"),
+            "name": name or "?",
+            "initials": (name or "?").strip()[:2].upper(),
             "speaking": self.users.get(uid, {}).get("speaking", False),
-            "self": uid == self.me,
-            "mute": bool(state.get("mute") or state.get("voice_state", {}).get("mute")),
-            "deaf": bool(state.get("deaf") or state.get("voice_state", {}).get("deaf")),
+            "self": uid == str(self.me),
+            "mute": bool(state.get("mute") or voice_state.get("mute")),
+            "deaf": bool(state.get("deaf") or voice_state.get("deaf")),
         }
 
     def handle(self, message):
+        if not isinstance(message, dict):
+            raise RuntimeError("invalid RPC message")
         cmd, evt, data = message.get("cmd"), message.get("evt"), message.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
 
         if evt == "ERROR":
             log(f"discord error: {data.get('message')}")
@@ -180,9 +305,12 @@ class Bridge:
                 self.emit()
                 return
             self.set_channel(data["id"])
-            self.channel = data.get("name")
-            for state in data.get("voice_states", []):
-                self.add_user(state)
+            self.channel = str(data.get("name") or "")[:MAX_CHANNEL_CHARS]
+            states = data.get("voice_states", [])
+            if isinstance(states, list):
+                for state in states[:MAX_USERS]:
+                    if isinstance(state, dict):
+                        self.add_user(state)
             self.emit()
         elif evt == "VOICE_CHANNEL_SELECT":
             channel_id = data.get("channel_id")
@@ -190,10 +318,13 @@ class Bridge:
             if channel_id:
                 self.send("GET_CHANNEL", {"channel_id": channel_id}, nonce="channel")
         elif evt in ("VOICE_STATE_CREATE", "VOICE_STATE_UPDATE"):
-            self.add_user(data)
+            if len(self.users) < MAX_USERS or str(data.get("user", {}).get("id")) in self.users:
+                self.add_user(data)
             self.emit()
         elif evt == "VOICE_STATE_DELETE":
-            self.users.pop(data.get("user", {}).get("id"), None)
+            user = data.get("user", {})
+            if isinstance(user, dict):
+                self.users.pop(str(user.get("id")), None)
             self.emit()
         elif evt in ("SPEAKING_START", "SPEAKING_STOP"):
             user = self.users.get(data.get("user_id"))
@@ -211,7 +342,15 @@ class Bridge:
                 continue
             try:
                 while True:
-                    self.handle(json.loads(self.ws.recv()))
+                    raw = self.ws.recv()
+                    if isinstance(raw, bytes):
+                        size = len(raw)
+                        raw = raw.decode("utf-8")
+                    else:
+                        size = len(raw.encode("utf-8"))
+                    if size > MAX_MESSAGE_BYTES:
+                        raise RuntimeError("RPC message exceeds size limit")
+                    self.handle(json.loads(raw))
                     self.backoff = 5
             except Exception as error:
                 log(f"disconnected: {error}")

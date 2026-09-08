@@ -84,6 +84,10 @@ It does not delete the Discord OAuth token.
 ## Security notes
 
 This project runs as the current user and does not inject into games or
-capture input. Nameplate connects to Discord locally and caches a scoped OAuth
-token. Treat `~/.config/nameplate/token` like a password and revoke the app
-from Discord's Authorized Apps page if you stop using the overlay.
+capture input. The bridge verifies the local RPC listener belongs to the
+current user's Discord/Vesktop executable before sending a token, bounds RPC
+and user data, and stores the scoped OAuth token through no-follow file
+descriptors. Treat `~/.config/nameplate/token` like a password and revoke the
+app from Discord's Authorized Apps page if you stop using the overlay. User
+avatars are intentionally rendered as bounded initials instead of downloaded
+remote images.

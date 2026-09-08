@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -138,6 +137,7 @@ Item {
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
             font.bold: true
+            textFormat: Text.PlainText
             elide: Text.ElideRight
           }
         }
@@ -154,32 +154,21 @@ Item {
               width: Style.space(26)
               height: width
 
-              Image {
-                id: avatar
-                anchors.fill: parent
-                source: entry.modelData.avatar || ""
-                sourceSize: Qt.size(78, 78)
-                asynchronous: true
-                visible: false
-              }
-
               Rectangle {
-                id: avatarMask
+                id: avatarCircle
                 anchors.fill: parent
                 radius: width / 2
-                visible: false
-                layer.enabled: true
-              }
+                color: Util.alpha(Color.popups.background, entry.modelData.speaking ? 0.9 : 0.65)
 
-              MultiEffect {
-                anchors.fill: parent
-                source: avatar
-                maskEnabled: true
-                maskSource: avatarMask
-                maskThresholdMin: 0.5
-                maskSpreadAtMin: 1.0
-                opacity: entry.modelData.speaking ? 1.0 : 0.72
-                saturation: entry.modelData.mute || entry.modelData.deaf ? -1.0 : 0.0
+                Text {
+                  anchors.centerIn: parent
+                  text: String(entry.modelData.initials || "?")
+                  color: Color.popups.text
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  textFormat: Text.PlainText
+                }
               }
 
               Rectangle {
@@ -207,6 +196,7 @@ Item {
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 font.bold: entry.modelData.speaking
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
               }
             }
