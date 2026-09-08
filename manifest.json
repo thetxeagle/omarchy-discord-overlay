@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "eagle.discord-voice-overlay",
   "name": "Discord Voice Overlay",
-  "version": "0.1.0",
-  "author": "Eagle",
+  "version": "0.2.0",
+  "author": "Harley Frank",
   "license": "MIT",
-  "description": "An always-on-top Discord voice roster with bar-controlled grid placement.",
+  "description": "A click-through Discord voice roster with channel name and bar-controlled grid placement.",
   "kinds": ["service", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {

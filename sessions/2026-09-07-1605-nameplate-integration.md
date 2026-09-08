@@ -20,6 +20,9 @@ bar plugin.
 - Added changelog and operational documentation.
 - Installed the bundle on the current Omarchy user account with a timestamped
   `shell.json` backup and an enabled `nameplate.service` unit.
+- Refactored the repository to a marketplace-compatible root manifest and
+  self-contained Omarchy service that launches the bundled Nameplate bridge.
+- Migrated the current machine away from the standalone Nameplate service.
 
 ## Files Changed
 
@@ -58,11 +61,16 @@ bar plugin.
 - A duplicate roster was traced to the foreground test instance running beside
   the permanent service; stopping the test process left one Nameplate layer per
   monitor.
+- `omarchy plugin validate .` passed for the root marketplace manifest.
+- The self-contained plugin loaded after `omarchy restart shell` and started
+  its bundled bridge; the bridge reported `in_voice:false` during the final
+  check because no active voice channel was selected.
 
 ## Next Steps
 
 - [x] Run shell syntax and JSON validation.
-- [x] Restart Nameplate and test channel label plus bar controls.
+- [x] Restart the self-contained plugin and test channel label plus bridge load.
+- [ ] Test bar controls while actively in a voice channel.
 - [ ] Commit and push the validated implementation.
 
 ## Notes

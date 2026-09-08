@@ -1,6 +1,13 @@
-MIT License
+# Third-party notices
 
-Copyright (c) 2026 Rolle Laukkarinen
+The bundled `nameplate-bridge` is adapted from
+[rollecode/nameplate](https://github.com/rollecode/nameplate), pinned to
+commit `b49464b652fccfb1ca7cf43d25dacdbe1e19db38`.
+
+Nameplate is licensed under the MIT License. The upstream copyright and
+license text are reproduced below.
+
+Copyright (c) 2026 rollecode
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
