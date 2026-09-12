@@ -116,6 +116,50 @@ BarWidget {
       }
 
       Text {
+        text: "SIZE"
+        color: Color.popups.text
+        opacity: 0.58
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        font.letterSpacing: 1.1
+      }
+
+      RowLayout {
+        width: parent.width
+        spacing: Style.space(10)
+
+        Text {
+          text: "󰍽"
+          color: Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+        }
+
+        PanelSlider {
+          id: scaleSlider
+          Layout.fillWidth: true
+          bar: root.bar
+          value: root.service ? (root.service.scaleFactor - root.service.minScale)
+                               / (root.service.maxScale - root.service.minScale) : 0.4
+          onMoved: function(v) {
+            if (root.service)
+              root.service.setScale(root.service.minScale + v * (root.service.maxScale - root.service.minScale))
+          }
+        }
+
+        Text {
+          text: root.service ? Math.round(((scaleSlider.dragging ? scaleSlider.liveValue : scaleSlider.value)
+                                          * (root.service.maxScale - root.service.minScale)
+                                          + root.service.minScale) * 100) + "%" : "115%"
+          color: Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignRight
+          Layout.preferredWidth: Style.space(42)
+        }
+      }
+
+      Text {
         width: parent.width
         wrapMode: Text.WordWrap
         text: "Placement is controlled here. The overlay itself stays out of the way of your game input."

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -18,6 +19,12 @@ Item {
   property string channelName: ""
   property var members: []
   property string dataState: "waiting"
+  property real scaleFactor: 1.15
+
+  readonly property real minScale: 0.75
+  readonly property real maxScale: 1.60
+  readonly property int edgePadding: Style.space(40)
+  readonly property int topPadding: Style.space(72)
 
   readonly property var placements: [
     "top-left", "top-center", "top-right",
@@ -41,10 +48,16 @@ Item {
     root.saveSettings()
   }
 
+  function setScale(value) {
+    root.scaleFactor = Math.max(root.minScale, Math.min(root.maxScale, Number(value)))
+    root.saveSettings()
+  }
+
   function saveSettings() {
     settingsFile.setText(JSON.stringify({
       placement: root.placement,
-      visible: root.overlayVisible
+      visible: root.overlayVisible,
+      scale: root.scaleFactor
     }, null, 2) + "\n")
   }
 
@@ -56,6 +69,8 @@ Item {
         root.placement = parsed.placement
       if (typeof parsed.visible === "boolean")
         root.overlayVisible = parsed.visible
+      if (typeof parsed.scale === "number")
+        root.scaleFactor = Math.max(root.minScale, Math.min(root.maxScale, parsed.scale))
     } catch (error) {
       // Defaults are intentional when the settings file is missing or corrupt.
     }
@@ -101,14 +116,14 @@ Item {
       screen: modelData
       anchors.top: true
       anchors.left: true
-      margins.left: root.placement.endsWith("left") ? Style.space(24)
-        : root.placement.endsWith("right") ? modelData.width - implicitWidth - Style.space(24)
+      margins.left: root.placement.endsWith("left") ? root.edgePadding
+        : root.placement.endsWith("right") ? modelData.width - implicitWidth - root.edgePadding
         : (modelData.width - implicitWidth) / 2
-      margins.top: root.placement.startsWith("top") ? Style.space(50)
-        : root.placement.startsWith("bottom") ? modelData.height - implicitHeight - Style.space(24)
+      margins.top: root.placement.startsWith("top") ? root.topPadding
+        : root.placement.startsWith("bottom") ? modelData.height - implicitHeight - root.edgePadding
         : (modelData.height - implicitHeight) / 2
-      implicitWidth: roster.implicitWidth
-      implicitHeight: roster.implicitHeight
+      implicitWidth: roster.implicitWidth * root.scaleFactor
+      implicitHeight: roster.implicitHeight * root.scaleFactor
       visible: root.overlayVisible && root.members.length > 0
       color: "transparent"
       exclusionMode: ExclusionMode.Ignore
@@ -121,6 +136,8 @@ Item {
       Column {
         id: roster
         spacing: Style.space(6)
+        scale: root.scaleFactor
+        transformOrigin: Item.TopLeft
 
         Rectangle {
           visible: root.channelName.length > 0
@@ -160,6 +177,36 @@ Item {
                 radius: width / 2
                 color: Util.alpha(Color.popups.background, entry.modelData.speaking ? 0.9 : 0.65)
 
+                Rectangle {
+                  id: avatarMask
+                  anchors.fill: parent
+                  color: "white"
+                  radius: width / 2
+                  visible: false
+                  layer.enabled: true
+                }
+
+                Item {
+                  anchors.fill: parent
+                  layer.enabled: true
+                  layer.smooth: true
+                  layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: avatarMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                  }
+
+                  Image {
+                    id: avatarImage
+                    anchors.fill: parent
+                    source: String(entry.modelData.avatar || "")
+                    sourceSize: Qt.size(96, 96)
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                  }
+                }
+
                 Text {
                   anchors.centerIn: parent
                   text: String(entry.modelData.initials || "?")
@@ -168,6 +215,7 @@ Item {
                   font.pixelSize: Style.font.caption
                   font.bold: true
                   textFormat: Text.PlainText
+                  visible: !entry.modelData.avatar || avatarImage.status !== Image.Ready
                 }
               }
 

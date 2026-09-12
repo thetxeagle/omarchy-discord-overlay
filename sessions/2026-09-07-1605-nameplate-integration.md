@@ -84,3 +84,31 @@ bar plugin.
 ## Notes
 
 Do not commit `~/.config/nameplate/token` or machine-specific Omarchy config.
+
+## Local UI Follow-up — 2026-09-11
+
+### Scope
+
+Restore avatar rendering, increase the default roster size, inset the overlay
+from screen edges, and expose persistent scale control in the bar popup.
+
+### Decisions
+
+- Avatars are fetched by the bridge only from the Discord CDN as PNGs.
+- Avatar bytes, dimensions, count, and total emitted JSON are bounded; initials
+  remain the fallback.
+- Scale is persisted from 75% through 160%, with a 115% default.
+- No GitHub push or marketplace re-review was performed in this slice.
+
+### Validation
+
+- `python -m py_compile nameplate-bridge`
+- `git diff --check`
+- Local installer completed and `omarchy restart shell` succeeded.
+- The restarted plugin has one bundled `nameplate-bridge` process and contains
+  the avatar, padding, and `PanelSlider` changes.
+
+### Next Steps
+
+- Join a voice channel and verify avatar CDN loading and slider interaction.
+- Review the uncommitted diff before a future commit/push.

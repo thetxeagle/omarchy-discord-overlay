@@ -3,8 +3,8 @@
 A click-through Discord voice overlay for Omarchy, Hyprland, and Quickshell.
 
 It uses the [Nameplate](https://github.com/rollecode/nameplate) Discord bridge
-inside an Omarchy plugin. The bar plugin adds a hide/show control and a 3×3
-placement grid. The channel name appears in the same transparent,
+inside an Omarchy plugin. The bar plugin adds a hide/show control, a 3×3
+placement grid, and a scale slider. The channel name appears in the same transparent,
 click-through overlay.
 
 The bundled Nameplate bridge is pinned to commit
@@ -46,8 +46,8 @@ appear:
 omarchy restart shell
 ```
 
-Open the Discord icon in the bar to hide/show the overlay or choose one of the
-nine grid positions. The overlay itself has an empty Wayland input region, so
+Open the Discord icon in the bar to hide/show the overlay, choose one of the
+nine grid positions, or adjust its size from 75% to 160%. The overlay itself has an empty Wayland input region, so
 mouse and keyboard input continue to reach the game underneath.
 
 ## Manual test and diagnostics
@@ -88,6 +88,7 @@ capture input. The bridge verifies the local RPC listener belongs to the
 current user's Discord/Vesktop executable before sending a token, bounds RPC
 and user data, and stores the scoped OAuth token through no-follow file
 descriptors. Treat `~/.config/nameplate/token` like a password and revoke the
-app from Discord's Authorized Apps page if you stop using the overlay. User
-avatars are intentionally rendered as bounded initials instead of downloaded
-remote images.
+app from Discord's Authorized Apps page if you stop using the overlay. Avatar
+images are fetched only from Discord's CDN, converted to bounded local data,
+cached per voice channel, and rejected when their byte or pixel limits are
+exceeded. Initials remain the fallback when an avatar is unavailable.
